@@ -12,9 +12,11 @@ def generate_frames():
         if not success:
             break
         _, buffer = cv2.imencode(".jpg", frame)
-        yield (b"--frame\r\n"
-               b"Content-Type: image/jpeg\r\n\r\n" +
-               buffer.tobytes() + b"\r\n")
+        yield (
+            b"--frame\r\n"
+            b"Content-Type: image/jpeg\r\n\r\n" +
+            buffer.tobytes() + b"\r\n"
+            )
 
 @app.get("/")
 def root():

@@ -7,6 +7,26 @@ $RequirementsFile = "$ProjectDir\requirements.txt"
 $ServiceName = "WindowsWebcamService"
 $NssmPath = "$ProjectDir\nssm.exe"
 
+# Step 2: Check if NSSM is present, if not, download it
+if (!(Test-Path $NssmPath)) {
+    Write-Output "NSSM not found, downloading..."
+    Invoke-WebRequest -Uri "https://nssm.cc/release/nssm-2.24.zip" -OutFile "$ProjectDir\nssm.zip"
+    
+    # Extract NSSM
+    Expand-Archive -Path "$ProjectDir\nssm.zip" -DestinationPath "$ProjectDir\nssm_temp" -Force
+    Move-Item -Path "$ProjectDir\nssm_temp\nssm-2.24\win64\nssm.exe" -Destination $NssmPath -Force
+
+    # Cleanup
+    Remove-Item -Path "$ProjectDir\nssm.zip" -Force
+    Remove-Item -Path "$ProjectDir\nssm_temp" -Recurse -Force
+
+    Write-Output "NSSM installed at: $NssmPath"
+} else {
+    Write-Output "NSSM is already present."
+}
+
+# Step 3: Create Virtual Environment if not exists
+
 # # Step 2: Detect Python
 # $PythonCmd = ""
 
@@ -27,7 +47,6 @@ $NssmPath = "$ProjectDir\nssm.exe"
 
 # Write-Output "Using Python command: $PythonCmd"
 
-# Step 3: Create Virtual Environment if not exists
 $VenvPath = "$ProjectDir\venv"
 $PythonExe = "$VenvPath\Scripts\python.exe"
 

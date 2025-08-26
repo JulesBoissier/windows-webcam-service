@@ -1,5 +1,9 @@
 # PowerShell script to set up a Windows service for a Python project using NSSM
 
+param(
+    [int]$Port = 8002  # Default port if none provided
+)
+
 # Step 1: Set variables
 $ProjectDir = $PSScriptRoot  # The directory where this script is located
 $MainScript = "$ProjectDir\main.py"
@@ -27,24 +31,6 @@ if (!(Test-Path $NssmPath)) {
 
 # Step 3: Create Virtual Environment if not exists
 
-# # Step 2: Detect Python
-# $PythonCmd = ""
-
-# # Check for python, py, and python3 using where.exe (CMD equivalent of which)
-# if (where.exe python 2>&1 | Out-String -Match "python.exe") {
-#     $PythonCmd = "python"
-# }
-# elseif (where.exe py 2>&1 | Out-String -Match "py.exe") {
-#     $PythonCmd = "py"
-# }
-# elseif (where.exe python3 2>&1 | Out-String -Match "python3.exe") {
-#     $PythonCmd = "python3"
-# }
-# else {
-#     Write-Output "ERROR: Python is not installed or not in PATH. Exiting..."
-#     Exit 1
-# }
-
 # Write-Output "Using Python command: $PythonCmd"
 
 $VenvPath = "$ProjectDir\venv"
@@ -70,7 +56,7 @@ if (Test-Path $NssmPath) {
 
 # Step 6: Install the service with NSSM
 Write-Output "Installing the Windows service..."
-& $NssmPath install $ServiceName $PythonExe $MainScript
+& $NssmPath install $ServiceName $PythonExe $MainScript "--port" "$Port"
 
 # Step 7: Start the service
 Write-Output "Starting the service..."
@@ -80,4 +66,4 @@ Write-Output "Starting the service..."
 Write-Output "Checking service status..."
 Get-Service -Name $ServiceName
 
-Write-Output "Setup completed! FastAPI should be running at http://127.0.0.1:8001"
+Write-Output "Setup completed! FastAPI should be running at http://127.0.0.1:$Port"

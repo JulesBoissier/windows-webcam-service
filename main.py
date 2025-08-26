@@ -21,7 +21,17 @@ def generate_frames():
 
 @app.get("/")
 def root():
-    return {"message": "Webcam Service Running"}
+    return {
+        "message": "Webcam Service is Running",
+        "version": "",
+        "uptime": "",
+        "routes": ["/", "/health", "/video_feed"],
+    }
+
+
+@app.get("/health")
+def health_check():
+    return {"status": "ok"}
 
 @app.get("/video_feed")
 def video_feed():

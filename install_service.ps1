@@ -1,69 +1,77 @@
-# PowerShell script to set up a Windows service for a Python project using NSSM
+#Requires -RunAsAdministrator
+# Installs the webcam server as a scheduled task that runs in your desktop session at logon.
+# Usage: .\install_service.ps1 [-Port 8001]
+#
+# Why a logon task and not a Windows service: services run as LocalSystem in session 0.
+# That account can't start a per-user or Microsoft Store Python, and camera privacy
+# settings are per user. Running as you, in your session, avoids both. The tracker is
+# only useful while you're logged in anyway.
 
 param(
-    [int]$Port = 8002  # Default port if none provided
+    [int]$Port = 0  # 0 means use $DefaultPort from config.ps1
 )
 
-# Step 1: Set variables
-$ProjectDir = $PSScriptRoot  # The directory where this script is located
-$MainScript = "$ProjectDir\main.py"
-$RequirementsFile = "$ProjectDir\requirements.txt"
-$ServiceName = "WindowsWebcamService"
-$NssmPath = "$ProjectDir\nssm.exe"
+. "$PSScriptRoot\config.ps1"
+if ($Port -eq 0) { $Port = $DefaultPort }
 
-# Step 2: Check if NSSM is present, if not, download it
-if (!(Test-Path $NssmPath)) {
-    Write-Output "NSSM not found, downloading..."
-    Invoke-WebRequest -Uri "https://nssm.cc/release/nssm-2.24.zip" -OutFile "$ProjectDir\nssm.zip"
-    
-    # Extract NSSM
-    Expand-Archive -Path "$ProjectDir\nssm.zip" -DestinationPath "$ProjectDir\nssm_temp" -Force
-    Move-Item -Path "$ProjectDir\nssm_temp\nssm-2.24\win64\nssm.exe" -Destination $NssmPath -Force
-
-    # Cleanup
-    Remove-Item -Path "$ProjectDir\nssm.zip" -Force
-    Remove-Item -Path "$ProjectDir\nssm_temp" -Recurse -Force
-
-    Write-Output "NSSM installed at: $NssmPath"
-} else {
-    Write-Output "NSSM is already present."
+# Step 1: Create Virtual Environment if not exists
+if (!(Test-Path $PythonwExe)) {
+    # Use the py launcher if installed, otherwise fall back to python on PATH
+    $PythonCmd = if (Get-Command py -ErrorAction SilentlyContinue) { "py" } else { "python" }
+    Write-Output "Creating virtual environment with '$PythonCmd'..."
+    & $PythonCmd -m venv $VenvPath
 }
 
-# Step 3: Create Virtual Environment if not exists
-
-# Write-Output "Using Python command: $PythonCmd"
-
-$VenvPath = "$ProjectDir\venv"
-$PythonExe = "$VenvPath\Scripts\python.exe"
-
-if (!(Test-Path $VenvPath)) {
-    Write-Output "Creating virtual environment..."
-    & py -m venv $VenvPath
+if (!(Test-Path $PythonwExe)) {
+    Write-Error "Virtual environment creation failed: $PythonwExe not found. Is Python installed?"
+    exit 1
 }
 
-# Step 4: Install required dependencies
+# Step 2: Install required dependencies
 Write-Output "Installing dependencies..."
 & $PythonExe -m pip install --upgrade pip
 & $PythonExe -m pip install -r $RequirementsFile
-
-# Step 5: Remove existing service (if any)
-Write-Output "Removing existing service (if exists)..."
-if (Test-Path $NssmPath) {
-    & $NssmPath remove $ServiceName confirm
-} else {
-    Write-Output "WARNING: NSSM not found. Skipping service removal step."
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "Dependency installation failed. Fix the pip error above and re-run."
+    exit 1
 }
 
-# Step 6: Install the service with NSSM
-Write-Output "Installing the Windows service..."
-& $NssmPath install $ServiceName $PythonExe $MainScript "--port" "$Port"
+# Step 3: Remove anything already serving the webcam: the old NSSM service, a previous
+# task, or a copy started by hand. Only one process can hold the camera.
+Remove-LegacyService
+Write-Output "Removing old scheduled task (if exists)..."
+Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
+Stop-PortListeners $Port
 
-# Step 7: Start the service
-Write-Output "Starting the service..."
-& $NssmPath start $ServiceName
+# Step 4: Register the scheduled task.
+# pythonw.exe runs without a console window; main.py writes its own log file,
+# since a task action is not a shell and cannot redirect output.
+Write-Output "Registering scheduled task..."
+$Action    = New-ScheduledTaskAction -Execute $PythonwExe `
+                 -Argument "`"$MainScript`" --port $Port --log-file `"$LogFile`"" `
+                 -WorkingDirectory $ProjectDir
+$Trigger   = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+# Limited: reading the camera needs no admin rights.
+$Principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
+# Defaults would kill the task after 72 hours and refuse to run on battery.
+$Settings  = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) `
+                 -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+                 -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
 
-# Step 8: Check if the service is running
-Write-Output "Checking service status..."
-Get-Service -Name $ServiceName
+Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger `
+    -Principal $Principal -Settings $Settings | Out-Null
 
-Write-Output "Setup completed! FastAPI should be running at http://127.0.0.1:$Port"
+# Step 5: Start it now rather than waiting for the next logon
+Write-Output "Starting the webcam server..."
+Start-ScheduledTask -TaskName $TaskName
+Start-Sleep -Seconds 3
+
+try {
+    Invoke-RestMethod "http://127.0.0.1:$Port/health" -TimeoutSec 5 | Out-Null
+    Write-Output "Setup completed! Webcam server is running at http://127.0.0.1:$Port"
+    Write-Output "Check the camera at http://127.0.0.1:$Port/video_feed"
+} catch {
+    Write-Warning "Task started but http://127.0.0.1:$Port/health is not responding yet. Check $LogFile or run .\status_service.ps1"
+}
+Write-Output "It will start automatically at logon. Logs: $LogFile"

@@ -97,11 +97,6 @@ def test_stream_ends_when_camera_fails(api, monkeypatch):
     assert jpeg_parts(r.content) == []
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Known limitation on main: the capture is opened once at import and never reopened. "
-    "Fixed on fix/install-scripts (read_frame reopens a closed capture).",
-)
 def test_reopens_camera_that_was_closed(api, monkeypatch):
     """If the capture device was closed (unplugged, grabbed by another app), it's reopened.
 

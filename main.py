@@ -1,4 +1,5 @@
 import argparse
+import sys
 import threading
 
 import cv2
@@ -54,5 +55,15 @@ def video_feed():
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=8001, help="Port to run the server on")
+    parser.add_argument(
+        "--log-file", help="Append stdout and stderr to this file instead of the console"
+    )
     args = parser.parse_args()
+
+    # Under pythonw.exe (used by the scheduled task) there is no console and
+    # sys.stdout/sys.stderr are None, which crashes uvicorn's logging setup.
+    if args.log_file:
+        log = open(args.log_file, "a", buffering=1, encoding="utf-8")
+        sys.stdout = sys.stderr = log
+
     uvicorn.run(app, host="0.0.0.0", port=args.port)

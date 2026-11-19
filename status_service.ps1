@@ -1,4 +1,4 @@
-# Shows whether the webcam service is installed, running and healthy, plus recent log lines.
+# Shows whether the webcam server is installed, running and healthy, plus recent log lines.
 # Usage: .\status_service.ps1 [-Port 8001] [-Lines 20]
 
 param(
@@ -9,11 +9,16 @@ param(
 . "$PSScriptRoot\config.ps1"
 if ($Port -eq 0) { $Port = $DefaultPort }
 
-$Service = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
-if ($Service) {
-    Write-Output "Service:  $($Service.Status) (startup $($Service.StartType))"
+$Task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+if ($Task) {
+    $Info = Get-ScheduledTaskInfo -TaskName $TaskName
+    Write-Output "Task:     $($Task.State) (last run $($Info.LastRunTime), result $($Info.LastTaskResult))"
 } else {
-    Write-Output "Service:  not installed"
+    Write-Output "Task:     not installed"
+}
+
+if (Test-LegacyService) {
+    Write-Output "Warning:  the old '$LegacyServiceName' Windows service still exists; .\install_service.ps1 removes it"
 }
 
 try {

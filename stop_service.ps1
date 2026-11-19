@@ -1,21 +1,24 @@
 #Requires -RunAsAdministrator
-# Stops the webcam service and removes it. Re-install with .\install_service.ps1
+# Stops the webcam server and removes its scheduled task. Re-install with .\install_service.ps1
+# Usage: .\stop_service.ps1 [-Port 8001]
+
+param(
+    [int]$Port = 0  # 0 means use $DefaultPort from config.ps1
+)
 
 . "$PSScriptRoot\config.ps1"
+if ($Port -eq 0) { $Port = $DefaultPort }
 
-if (!(Get-Service -Name $ServiceName -ErrorAction SilentlyContinue)) {
-    Write-Output "Service '$ServiceName' is not installed."
-    exit 0
-}
-
-Write-Output "Stopping service '$ServiceName'..."
-Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
-
-Write-Output "Removing service '$ServiceName'..."
-if (Test-Path $NssmPath) {
-    & $NssmPath remove $ServiceName confirm
+if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
+    Write-Output "Stopping scheduled task '$TaskName'..."
+    Stop-ScheduledTask -TaskName $TaskName
+    Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
+    Write-Output "Scheduled task removed."
 } else {
-    sc.exe delete $ServiceName
+    Write-Output "Scheduled task '$TaskName' is not installed."
 }
 
-Write-Output "Webcam service stopped and removed."
+Remove-LegacyService
+Stop-PortListeners $Port
+
+Write-Output "Webcam server stopped."

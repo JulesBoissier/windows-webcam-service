@@ -172,3 +172,8 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# NSSM binary and download leftovers (fetched by install_service.ps1)
+nssm.exe
+nssm.zip
+nssm_temp/

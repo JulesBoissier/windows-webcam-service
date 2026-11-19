@@ -1,4 +1,6 @@
 import argparse
+import threading
+
 import cv2
 import uvicorn
 from fastapi import FastAPI
@@ -6,10 +8,22 @@ from fastapi.responses import StreamingResponse
 
 app = FastAPI()
 cap = cv2.VideoCapture(0)  # Open webcam
+cap_lock = threading.Lock()  # VideoCapture is not thread-safe across requests
+
+
+def read_frame():
+    global cap
+    with cap_lock:
+        if not cap.isOpened():
+            # Camera was unplugged or grabbed by another app; try to reopen it
+            cap.release()
+            cap = cv2.VideoCapture(0)
+        return cap.read()
+
 
 def generate_frames():
     while True:
-        success, frame = cap.read()
+        success, frame = read_frame()
         if not success:
             break
         _, buffer = cv2.imencode(".jpg", frame)

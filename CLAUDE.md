@@ -15,6 +15,7 @@ No pre-commit yet.
 - `GET /` — info blob, including `resolution: {requested, actual}` (`version`/`uptime` are empty placeholders).
 - `GET /health` — `{"status": "ok"}`; used by the orchestrator's health check.
 - `GET /snapshot` — **one JPEG frame captured after the request arrived** (`image/jpeg`, header `X-Frame-Delay-Ms`); 503 if no frame within `FRAME_TIMEOUT_S`. This is what the orchestrator uses.
+- `GET /frame_at?t=<unix time>` — the recorded JPEG closest to `t` (header `X-Frame-Time`), for implicit calibration from clicks (`t` comes from the watchdog's `/clicks`, same Windows clock). The first request turns on `FrameHistory` (~10 fps, last 5 s, ~5 MB at 720p); 404 if no frame within 0.25 s.
 - `GET /video_feed` — `multipart/x-mixed-replace; boundary=frame` stream of JPEG frames until the camera fails or the client disconnects. Kept for browser debugging and older clients.
 
 ## Tests

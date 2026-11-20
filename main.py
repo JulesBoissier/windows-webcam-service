@@ -2,6 +2,7 @@ import argparse
 import sys
 import threading
 import time
+from collections import deque
 from contextlib import asynccontextmanager
 
 import cv2
@@ -56,6 +57,48 @@ def read_frame():
         return cap.read()
 
 
+# Frame history for /frame_at (implicit calibration): JPEG frames every HISTORY_INTERVAL_S
+# seconds for the last HISTORY_SECONDS. ~50 frames of ~100 KB at 720p.
+HISTORY_SECONDS = 5.0
+HISTORY_INTERVAL_S = 0.1
+# A requested time farther than this from every stored frame has no frame.
+HISTORY_MAX_GAP_S = 0.25
+
+
+class FrameHistory:
+    """Recent JPEG frames with wall-clock timestamps (Windows ``time.time()``)."""
+
+    def __init__(self, seconds=None, interval=None):
+        self.seconds = HISTORY_SECONDS if seconds is None else seconds
+        self.interval = HISTORY_INTERVAL_S if interval is None else interval
+        self._frames = deque()
+        self._lock = threading.Lock()
+
+    def due(self, t: float) -> bool:
+        """Whether a frame read at ``t`` should be stored (keeps ~1 per interval)."""
+        with self._lock:
+            return not self._frames or t - self._frames[-1][0] >= self.interval
+
+    def add(self, t: float, jpeg: bytes):
+        with self._lock:
+            self._frames.append((t, jpeg))
+            while self._frames and t - self._frames[0][0] > self.seconds:
+                self._frames.popleft()
+
+    def newest_time(self):
+        with self._lock:
+            return self._frames[-1][0] if self._frames else None
+
+    def closest(self, t: float, max_gap: float = None):
+        """``(time, jpeg)`` of the stored frame closest to ``t``, or None if none is near enough."""
+        max_gap = HISTORY_MAX_GAP_S if max_gap is None else max_gap
+        with self._lock:
+            if not self._frames:
+                return None
+            best = min(self._frames, key=lambda f: abs(f[0] - t))
+        return best if abs(best[0] - t) <= max_gap else None
+
+
 class FrameGrabber:
     """Reads the camera continuously on a background thread and keeps the latest frame.
 
@@ -71,6 +114,12 @@ class FrameGrabber:
         self._cond = threading.Condition()
         self._stop = threading.Event()
         self._thread = None
+        self.history = None  # a FrameHistory once /frame_at has been asked for
+
+    def enable_history(self):
+        if self.history is None:
+            self.history = FrameHistory()
+        return self.history
 
     @property
     def running(self) -> bool:
@@ -93,6 +142,10 @@ class FrameGrabber:
             if not ok:
                 self._stop.wait(RETRY_DELAY_S)
                 continue
+            wall = time.time()
+            history = self.history
+            if history is not None and history.due(wall):
+                history.add(wall, encode_jpeg(frame))
             with self._cond:
                 self._frame = frame
                 self._time = time.monotonic()
@@ -150,7 +203,7 @@ def root():
         "message": "Webcam Service is Running",
         "version": "",
         "uptime": "",
-        "routes": ["/", "/health", "/snapshot", "/video_feed"],
+        "routes": ["/", "/health", "/snapshot", "/frame_at", "/video_feed"],
         "resolution": camera_info(),
     }
 
@@ -176,6 +229,26 @@ def snapshot():
         media_type="image/jpeg",
         headers={"X-Frame-Delay-Ms": f"{(read_time - requested) * 1000:.0f}"},
     )
+
+
+@app.get("/frame_at")
+def frame_at(t: float):
+    """The recorded frame closest to wall-clock time ``t`` (Windows ``time.time()``).
+
+    For implicit calibration: ``t`` is a click time from the watchdog's ``/clicks``. The
+    first request turns on frame history, so clicks before it have no frame (404). If
+    ``t`` is in the last moments, waits briefly for the next frame. 404 if no stored frame
+    is within HISTORY_MAX_GAP_S of ``t``.
+    """
+    history = grabber.enable_history()
+    deadline = time.monotonic() + FRAME_TIMEOUT_S
+    while (history.newest_time() or 0) < t and time.monotonic() < deadline and grabber.running:
+        time.sleep(0.02)
+    found = history.closest(t)
+    if found is None:
+        raise HTTPException(status_code=404, detail="No recorded frame near that time.")
+    frame_time, jpeg = found
+    return Response(content=jpeg, media_type="image/jpeg", headers={"X-Frame-Time": f"{frame_time:.3f}"})
 
 
 @app.get("/video_feed")

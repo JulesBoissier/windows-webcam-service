@@ -40,6 +40,12 @@ class LiveCapture:
     def release(self):
         pass
 
+    def set(self, prop, value):
+        return True
+
+    def get(self, prop):
+        return 0
+
 
 def frame_number(jpeg: bytes) -> int:
     image = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)

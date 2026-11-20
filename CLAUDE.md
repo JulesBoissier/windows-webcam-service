@@ -12,7 +12,7 @@ No pre-commit yet.
 
 ## Routes
 
-- `GET /` — info blob (`version`/`uptime` are empty placeholders).
+- `GET /` — info blob, including `resolution: {requested, actual}` (`version`/`uptime` are empty placeholders).
 - `GET /health` — `{"status": "ok"}`; used by the orchestrator's health check.
 - `GET /snapshot` — **one JPEG frame captured after the request arrived** (`image/jpeg`, header `X-Frame-Delay-Ms`); 503 if no frame within `FRAME_TIMEOUT_S`. This is what the orchestrator uses.
 - `GET /video_feed` — `multipart/x-mixed-replace; boundary=frame` stream of JPEG frames until the camera fails or the client disconnects. Kept for browser debugging and older clients.
@@ -43,6 +43,7 @@ venv\Scripts\python main.py --port 8001     # foreground, for debugging
 - **Runs as a scheduled task at logon, not a Windows service.** It used to be an NSSM service running as LocalSystem in session 0. That broke in two ways: LocalSystem can't start a Microsoft Store or per-user Python (the venv launcher fails with "The file cannot be accessed by the system", error 1920, and NSSM shows the service as *Paused*), and camera privacy settings are per user. A logon task runs as the user, in their session, the same way the watchdog does. The cost is that it only runs while the user is logged in, which is the only time the tracker is useful anyway.
 - **`--log-file`** exists because the task runs `pythonw.exe` (no console window), where `sys.stdout`/`sys.stderr` are `None` and uvicorn's logging would crash. A task action isn't a shell, so output can't be redirected with `>`.
 - **Background grabber, fresh snapshots.** OpenCV buffers a few frames, so the first frame of a newly opened stream can predate the request (e.g. come from before the user looked at a calibration dot). `FrameGrabber` reads the camera continuously, keeping that buffer empty, and `/snapshot` waits for the first frame read *after* the request. Cost: the camera is read at full frame rate all the time (it was already held open). Without the lifespan (e.g. `TestClient(app)` outside a `with`), the grabber isn't running and `/video_feed` reads the camera directly; the older tests rely on that.
+- **1280×720 MJPG by default** (`open_camera()`, `REQUESTED_SIZE`, `--width/--height`). At OpenCV's default 640×480 the face is ~120 px wide. Cameras may deliver another size; `GET /` shows the actual one. Costs ~50% more gaze-model time per frame in the vision service (181 → 272 ms measured). Calibration profiles stay valid across resolutions (the vision service measures face width relative to image width).
 - Binds `0.0.0.0` so the orchestrator can reach it from WSL/Docker.
 
 ## Gotchas

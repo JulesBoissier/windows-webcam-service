@@ -9,7 +9,35 @@ import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import Response, StreamingResponse
 
-cap = cv2.VideoCapture(0)  # Open webcam
+# Requested capture size. OpenCV's default is usually 640x480, where the face is only
+# ~120 px wide and the eyes a few pixels; a larger face crop gives the gaze model more to
+# work with. The camera may deliver a different size: see camera_info().
+REQUESTED_SIZE = (1280, 720)
+
+
+def open_camera():
+    """Open the default camera, asking for MJPG at REQUESTED_SIZE.
+
+    Many USB webcams only reach 720p at full frame rate with MJPG; uncompressed (YUY2)
+    720p is often limited to ~10 fps.
+    """
+    camera = cv2.VideoCapture(0)
+    camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+    camera.set(cv2.CAP_PROP_FRAME_WIDTH, REQUESTED_SIZE[0])
+    camera.set(cv2.CAP_PROP_FRAME_HEIGHT, REQUESTED_SIZE[1])
+    return camera
+
+
+def camera_info() -> dict:
+    """What the camera actually delivers (it may not honour the requested size)."""
+    with cap_lock:
+        return {
+            "requested": list(REQUESTED_SIZE),
+            "actual": [int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))],
+        }
+
+
+cap = open_camera()
 cap_lock = threading.Lock()  # VideoCapture is not thread-safe across requests
 
 # How long /snapshot and /video_feed wait for a new frame before giving up.
@@ -24,7 +52,7 @@ def read_frame():
         if not cap.isOpened():
             # Camera was unplugged or grabbed by another app; try to reopen it
             cap.release()
-            cap = cv2.VideoCapture(0)
+            cap = open_camera()
         return cap.read()
 
 
@@ -123,6 +151,7 @@ def root():
         "version": "",
         "uptime": "",
         "routes": ["/", "/health", "/snapshot", "/video_feed"],
+        "resolution": camera_info(),
     }
 
 
@@ -160,7 +189,15 @@ if __name__ == "__main__":
     parser.add_argument(
         "--log-file", help="Append stdout and stderr to this file instead of the console"
     )
+    parser.add_argument("--width", type=int, default=REQUESTED_SIZE[0], help="Requested frame width")
+    parser.add_argument("--height", type=int, default=REQUESTED_SIZE[1], help="Requested frame height")
     args = parser.parse_args()
+
+    if (args.width, args.height) != REQUESTED_SIZE:
+        REQUESTED_SIZE = (args.width, args.height)
+        with cap_lock:
+            cap.release()
+            cap = open_camera()
 
     # Under pythonw.exe (used by the scheduled task) there is no console and
     # sys.stdout/sys.stderr are None, which crashes uvicorn's logging setup.

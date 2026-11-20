@@ -31,6 +31,12 @@ class FakeCapture:
     def release(self):
         self.opened = False
 
+    def set(self, prop, value):  # the service configures every camera it opens
+        return True
+
+    def get(self, prop):
+        return 0
+
 
 def frames(n):
     yy, xx = np.mgrid[0:120, 0:160]

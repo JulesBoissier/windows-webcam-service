@@ -4,7 +4,7 @@ Tiny FastAPI app that exposes the Windows host's default webcam (`cv2.VideoCaptu
 
 ## Layout
 
-- `main.py` — the whole app: FastAPI routes, a shared `VideoCapture` guarded by `cap_lock`, `read_frame()` that reopens a closed camera, argparse (`--port`, `--log-file`).
+- `main.py` — the whole app: FastAPI routes, a shared `VideoCapture` guarded by `cap_lock`, `read_frame()` that reopens a closed camera, `FrameGrabber` (background thread started by the app's lifespan), argparse (`--port`, `--log-file`).
 - `config.ps1` — shared names and paths, dot-sourced by the scripts below; also holds the legacy-service cleanup helpers.
 - `install_service.ps1` / `stop_service.ps1` / `restart_service.ps1` / `status_service.ps1` — manage the `WindowsWebcamService` **scheduled task**. Despite the file names, there is no Windows service any more; the names are kept so the commands match the watchdog's.
 
@@ -14,7 +14,8 @@ No pre-commit yet.
 
 - `GET /` — info blob (`version`/`uptime` are empty placeholders).
 - `GET /health` — `{"status": "ok"}`; used by the orchestrator's health check.
-- `GET /video_feed` — `multipart/x-mixed-replace; boundary=frame` stream of JPEG frames, generated forever until the camera read fails or the client disconnects.
+- `GET /snapshot` — **one JPEG frame captured after the request arrived** (`image/jpeg`, header `X-Frame-Delay-Ms`); 503 if no frame within `FRAME_TIMEOUT_S`. This is what the orchestrator uses.
+- `GET /video_feed` — `multipart/x-mixed-replace; boundary=frame` stream of JPEG frames until the camera fails or the client disconnects. Kept for browser debugging and older clients.
 
 ## Tests
 
@@ -41,7 +42,7 @@ venv\Scripts\python main.py --port 8001     # foreground, for debugging
 
 - **Runs as a scheduled task at logon, not a Windows service.** It used to be an NSSM service running as LocalSystem in session 0. That broke in two ways: LocalSystem can't start a Microsoft Store or per-user Python (the venv launcher fails with "The file cannot be accessed by the system", error 1920, and NSSM shows the service as *Paused*), and camera privacy settings are per user. A logon task runs as the user, in their session, the same way the watchdog does. The cost is that it only runs while the user is logged in, which is the only time the tracker is useful anyway.
 - **`--log-file`** exists because the task runs `pythonw.exe` (no console window), where `sys.stdout`/`sys.stderr` are `None` and uvicorn's logging would crash. A task action isn't a shell, so output can't be redirected with `>`.
-- **Pull model, single global `VideoCapture`.** The camera is opened once at import time and shared by all requests under `cap_lock`. The orchestrator opens a stream, reads one frame and disconnects every cycle, so the stream is effectively used as "get latest frame". OpenCV buffers frames, so the first frame of a new stream can be stale (see `docs/IMPROVEMENTS.md` 1.2).
+- **Background grabber, fresh snapshots.** OpenCV buffers a few frames, so the first frame of a newly opened stream can predate the request (e.g. come from before the user looked at a calibration dot). `FrameGrabber` reads the camera continuously, keeping that buffer empty, and `/snapshot` waits for the first frame read *after* the request. Cost: the camera is read at full frame rate all the time (it was already held open). Without the lifespan (e.g. `TestClient(app)` outside a `with`), the grabber isn't running and `/video_feed` reads the camera directly; the older tests rely on that.
 - Binds `0.0.0.0` so the orchestrator can reach it from WSL/Docker.
 
 ## Gotchas
